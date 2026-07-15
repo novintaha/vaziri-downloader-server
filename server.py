@@ -10,7 +10,6 @@ from datetime import timedelta
 
 app = Flask(__name__)
 
-# تنظیمات پایه
 DOWNLOAD_FOLDER = "downloads"
 Path(DOWNLOAD_FOLDER).mkdir(exist_ok=True)
 
@@ -23,14 +22,12 @@ logger = logging.getLogger(__name__)
 
 @app.before_request
 def log_request():
-    """لاگ تمام درخواست‌ها برای دیباگ"""
     logger.info(f"📥 {request.method} {request.path}")
     body = request.get_data()
     if body:
         logger.info(f"📦 BODY: {body[:200]}...")
 
 
-# پاک‌سازی فایل‌های قبلی
 def cleanup_old_files():
     for old_file in os.listdir(DOWNLOAD_FOLDER):
         try:
@@ -42,7 +39,6 @@ def cleanup_old_files():
 
 cleanup_old_files()
 
-# تنظیمات کوکی
 ORIGINAL_COOKIE_FILE = "/etc/secrets/cookies.txt"
 WRITABLE_COOKIE_FILE = "/tmp/cookies.txt"
 USE_COOKIE = False
@@ -58,10 +54,7 @@ else:
     logger.warning("⚠️ Cookie file not found in /etc/secrets/")
 
 
-def get_ydl_opts(format_id=None, output=None, download_type=None):
-    """
-    تنظیمات بهینه yt-dlp برای دورزدن محدودیت‌های یوتیوب
-    """
+def get_ydl_opts(format_id=None, output=None, audio_only=False):
     opts = {
         "quiet": False,
         "no_warnings": False,
@@ -75,37 +68,34 @@ def get_ydl_opts(format_id=None, output=None, download_type=None):
             }
         },
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "restrictfilenames": True,  # اسم فایل رو ایمن کن
-        "trim_file_name": 200,  # محدودیت اسم فایل
+        "restrictfilenames": True,
+        "trim_file_name": 200,
     }
 
     if USE_COOKIE:
         opts["cookiefile"] = WRITABLE_COOKIE_FILE
-        logger.info("🍪 Using cookies for authentication")
 
-    # تنظیمات خاص برای دانلود صدا
-    if download_type == "audio":
+    if audio_only:
         opts["format"] = "bestaudio/best"
         opts["postprocessors"] = [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
             "preferredquality": "192",
         }]
-        opts["outtmpl"] = output.replace(".%(ext)s", ".mp3") if output else None
+        if output:
+            opts["outtmpl"] = output.replace(".%(ext)s", ".mp3")
     else:
         if format_id:
             opts["format"] = format_id
         else:
             opts["skip_download"] = True
-
-    if output and download_type != "audio":
-        opts["outtmpl"] = output
+        if output:
+            opts["outtmpl"] = output
 
     return opts
 
 
 def format_file_size(size_bytes):
-    """تبدیل اندازه فایل به واحد قابل‌خواندن"""
     if not size_bytes:
         return None
     if size_bytes < 1024:
@@ -119,67 +109,9 @@ def format_file_size(size_bytes):
 
 
 def format_duration(seconds):
-    """تبدیل ثانیه به زمان قابل‌خواندن"""
     if not seconds:
         return "N/A"
     return str(timedelta(seconds=int(seconds)))
-
-
-def categorize_formats(formats):
-    """دسته‌بندی فرمت‌ها به ویدیو، صدا، ویدیو+صدا و فرمت‌های ویژه"""
-    result = {
-        "video": [],
-        "audio": [],
-        "video_audio": [],
-        "all": []
-    }
-
-    for f in formats:
-        format_id = f.get("format_id")
-        ext = f.get("ext", "unknown")
-        resolution = f.get("resolution", "unknown")
-        filesize = f.get("filesize")
-        vcodec = f.get("vcodec", "none")
-        acodec = f.get("acodec", "none")
-        fps = f.get("fps")
-        tbr = f.get("tbr")
-        vbr = f.get("vbr")
-        abr = f.get("abr")
-        format_note = f.get("format_note", "")
-        quality = f.get("quality", 0)
-
-        format_info = {
-            "format_id": format_id,
-            "ext": ext,
-            "resolution": resolution,
-            "filesize": filesize,
-            "filesize_human": format_file_size(filesize),
-            "vcodec": vcodec,
-            "acodec": acodec,
-            "fps": fps,
-            "tbr": tbr,
-            "vbr": vbr,
-            "abr": abr,
-            "format_note": format_note,
-            "quality": quality,
-            "has_video": vcodec != "none",
-            "has_audio": acodec != "none"
-        }
-
-        result["all"].append(format_info)
-
-        # دسته‌بندی
-        has_video = vcodec != "none"
-        has_audio = acodec != "none"
-
-        if has_video and has_audio:
-            result["video_audio"].append(format_info)
-        elif has_video and not has_audio:
-            result["video"].append(format_info)
-        elif not has_video and has_audio:
-            result["audio"].append(format_info)
-
-    return result
 
 
 @app.route("/")
@@ -189,10 +121,10 @@ def home():
         "message": "VaziriDownloader Server is running",
         "cookies": "✅ Active" if USE_COOKIE else "❌ Not found",
         "endpoints": {
-            "/formats": "POST - Get all available formats for a video",
-            "/download": "POST - Download video/audio with specific format",
-            "/download_audio": "POST - Download audio as MP3",
-            "/download_best": "POST - Download best quality video+audio"
+            "/formats": "POST - Get all available formats",
+            "/download": "POST - Download with specific format",
+            "/download_audio": "POST - Download as MP3",
+            "/download_best": "POST - Download best quality"
         }
     })
 
@@ -214,54 +146,71 @@ def get_formats():
             info = ydl.extract_info(url, download=False)
 
         all_formats = info.get("formats", [])
-        categorized = categorize_formats(all_formats)
+
+        # دسته‌بندی فرمت‌ها
+        video_formats = []
+        audio_formats = []
+        combined_formats = []
+
+        for f in all_formats:
+            format_info = {
+                "format_id": f.get("format_id"),
+                "ext": f.get("ext", "unknown"),
+                "resolution": f.get("resolution", "unknown"),
+                "filesize_human": format_file_size(f.get("filesize")),
+                "vcodec": f.get("vcodec", "none"),
+                "acodec": f.get("acodec", "none"),
+                "fps": f.get("fps"),
+                "tbr": f.get("tbr"),
+                "vbr": f.get("vbr"),
+                "abr": f.get("abr"),
+                "format_note": f.get("format_note", ""),
+                "quality": f.get("quality", 0)
+            }
+
+            has_video = f.get("vcodec") != "none"
+            has_audio = f.get("acodec") != "none"
+
+            if has_video and has_audio:
+                combined_formats.append(format_info)
+            elif has_video and not has_audio:
+                video_formats.append(format_info)
+            elif not has_video and has_audio:
+                audio_formats.append(format_info)
 
         video_info = {
             "title": info.get("title"),
             "thumbnail": info.get("thumbnail"),
-            "duration": info.get("duration"),
             "duration_human": format_duration(info.get("duration")),
             "uploader": info.get("uploader"),
-            "uploader_id": info.get("uploader_id"),
-            "description": info.get("description", "")[:300] + "..." if info.get("description") and len(info.get("description", "")) > 300 else info.get("description", ""),
             "view_count": info.get("view_count"),
             "like_count": info.get("like_count"),
-            "categories": info.get("categories", []),
-            "tags": info.get("tags", [])[:15],
-            "webpage_url": info.get("webpage_url"),
-            "extractor": info.get("extractor")
         }
 
         summary = {
-            "total_formats": len(all_formats),
-            "video_only": len(categorized["video"]),
-            "audio_only": len(categorized["audio"]),
-            "video_audio": len(categorized["video_audio"]),
-            "best_video_quality": categorized["video"][0].get("resolution") if categorized["video"] else None,
-            "best_audio_quality": f"{categorized['audio'][0].get('abr', 0)} kbps" if categorized["audio"] else None,
-            "best_combined_quality": categorized["video_audio"][0].get("resolution") if categorized["video_audio"] else None
+            "total": len(all_formats),
+            "video_only": len(video_formats),
+            "audio_only": len(audio_formats),
+            "video_audio": len(combined_formats)
         }
-
-        logger.info(f"✅ Found {summary['total_formats']} formats for: {video_info['title']}")
 
         return jsonify({
             "video_info": video_info,
             "summary": summary,
-            "formats": categorized,
-            "recommended": {
-                "best_video": categorized["video"][0] if categorized["video"] else None,
-                "best_audio": categorized["audio"][0] if categorized["audio"] else None,
-                "best_combined": categorized["video_audio"][0] if categorized["video_audio"] else None
+            "formats": {
+                "video": video_formats,
+                "audio": audio_formats,
+                "video_audio": combined_formats
             },
-            "download_options": {
-                "audio_mp3": "/download_audio",
-                "best_quality": "/download_best",
-                "custom_format": "/download"
+            "recommended": {
+                "best_video": video_formats[0] if video_formats else None,
+                "best_audio": audio_formats[0] if audio_formats else None,
+                "best_combined": combined_formats[0] if combined_formats else None
             }
         })
 
     except Exception as e:
-        logger.error(f"❌ Error in /formats: {str(e)}")
+        logger.error(f"❌ Error: {str(e)}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -281,9 +230,6 @@ def download_video():
 
         if not format_id:
             format_id = "best"
-            logger.info(f"ℹ️ No format_id provided, using 'best'")
-
-        logger.info(f"⬇️ Downloading: {url} with format: {format_id}")
 
         filename_id = str(uuid.uuid4())
         output = os.path.join(DOWNLOAD_FOLDER, f"{filename_id}.%(ext)s")
@@ -293,9 +239,7 @@ def download_video():
             filename = ydl.prepare_filename(info)
 
         if not os.path.exists(filename):
-            raise FileNotFoundError(f"File not found after download: {filename}")
-
-        logger.info(f"✅ Download complete: {os.path.basename(filename)}")
+            raise FileNotFoundError(f"File not found: {filename}")
 
         response = send_file(filename, as_attachment=True)
 
@@ -304,44 +248,32 @@ def download_video():
             try:
                 if os.path.exists(filename):
                     os.remove(filename)
-                    logger.info(f"🗑️ Cleaned up: {os.path.basename(filename)}")
-            except Exception as e:
-                logger.warning(f"⚠️ Cleanup failed: {e}")
+            except:
+                pass
 
         return response
 
     except Exception as e:
-        logger.error(f"❌ Error in /download: {str(e)}")
+        logger.error(f"❌ Error: {str(e)}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
 @app.route("/download_audio", methods=["POST"])
 def download_audio():
-    """دانلود صدا به صورت MP3"""
     try:
         data = request.get_json(silent=True)
         if not data:
             return jsonify({"error": "JSON دریافت نشد"}), 400
 
         url = data.get("url")
-        quality = data.get("quality", "192")  # کیفیت پیش‌فرض 192 kbps
-
         if not url:
             return jsonify({"error": "لینک ارسال نشده"}), 400
-
-        logger.info(f"🎵 Downloading audio from: {url} (quality: {quality} kbps)")
 
         filename_id = str(uuid.uuid4())
         output = os.path.join(DOWNLOAD_FOLDER, f"{filename_id}.%(ext)s")
 
-        opts = get_ydl_opts(download_type="audio")
-        opts["postprocessors"] = [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3",
-            "preferredquality": quality,
-        }]
-        opts["outtmpl"] = os.path.join(DOWNLOAD_FOLDER, filename_id)
+        opts = get_ydl_opts(audio_only=True, output=output)
 
         with yt_dlp.YoutubeDL(opts) as ydl:
             ydl.download([url])
@@ -349,9 +281,7 @@ def download_audio():
         filename = os.path.join(DOWNLOAD_FOLDER, f"{filename_id}.mp3")
 
         if not os.path.exists(filename):
-            raise FileNotFoundError(f"MP3 file not found after download: {filename}")
-
-        logger.info(f"✅ Audio download complete: {os.path.basename(filename)}")
+            raise FileNotFoundError(f"MP3 not found: {filename}")
 
         response = send_file(filename, as_attachment=True)
 
@@ -360,32 +290,27 @@ def download_audio():
             try:
                 if os.path.exists(filename):
                     os.remove(filename)
-                    logger.info(f"🗑️ Cleaned up: {os.path.basename(filename)}")
-            except Exception as e:
-                logger.warning(f"⚠️ Cleanup failed: {e}")
+            except:
+                pass
 
         return response
 
     except Exception as e:
-        logger.error(f"❌ Error in /download_audio: {str(e)}")
+        logger.error(f"❌ Error: {str(e)}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
 @app.route("/download_best", methods=["POST"])
 def download_best():
-    """دانلود بهترین کیفیت ممکن (ویدیو + صدا)"""
     try:
         data = request.get_json(silent=True)
         if not data:
             return jsonify({"error": "JSON دریافت نشد"}), 400
 
         url = data.get("url")
-
         if not url:
             return jsonify({"error": "لینک ارسال نشده"}), 400
-
-        logger.info(f"🌟 Downloading best quality from: {url}")
 
         filename_id = str(uuid.uuid4())
         output = os.path.join(DOWNLOAD_FOLDER, f"{filename_id}.%(ext)s")
@@ -395,9 +320,7 @@ def download_best():
             filename = ydl.prepare_filename(info)
 
         if not os.path.exists(filename):
-            raise FileNotFoundError(f"File not found after download: {filename}")
-
-        logger.info(f"✅ Best quality download complete: {os.path.basename(filename)}")
+            raise FileNotFoundError(f"File not found: {filename}")
 
         response = send_file(filename, as_attachment=True)
 
@@ -406,14 +329,13 @@ def download_best():
             try:
                 if os.path.exists(filename):
                     os.remove(filename)
-                    logger.info(f"🗑️ Cleaned up: {os.path.basename(filename)}")
-            except Exception as e:
-                logger.warning(f"⚠️ Cleanup failed: {e}")
+            except:
+                pass
 
         return response
 
     except Exception as e:
-        logger.error(f"❌ Error in /download_best: {str(e)}")
+        logger.error(f"❌ Error: {str(e)}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
