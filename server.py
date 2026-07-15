@@ -31,6 +31,7 @@ def get_formats():
         "quiet": True,
         "skip_download": True,
         "cookiefile": "/etc/secrets/cookies.txt",
+        "extractor_args": {"youtube": {"player_client": ["android"]}},
     }
 
     try:
@@ -75,6 +76,7 @@ def download_video():
         "format": format_id,
         "outtmpl": output_template,
         "cookiefile": "/etc/secrets/cookies.txt",
+        "extractor_args": {"youtube": {"player_client": ["android"]}},
     }
 
     try:
