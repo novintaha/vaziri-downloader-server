@@ -39,7 +39,7 @@ def get_ydl_opts(format_id=None, output_template=None):
         "nocheckcertificate": True,
         "extractor_args": {
             "youtube": {
-                "player_client": ["android"],
+                "player_client": ["android", "ios"],
             }
         },
     }
