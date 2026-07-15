@@ -39,19 +39,21 @@ def cleanup_old_files():
 
 cleanup_old_files()
 
+# کوکی را موقتاً غیرفعال می‌کنیم (چون نامعتبر است)
 ORIGINAL_COOKIE_FILE = "/etc/secrets/cookies.txt"
 WRITABLE_COOKIE_FILE = "/tmp/cookies.txt"
-USE_COOKIE = False
+USE_COOKIE = False  # <-- مهم: کوکی را خاموش کردیم
 
-if os.path.exists(ORIGINAL_COOKIE_FILE):
-    try:
-        shutil.copy(ORIGINAL_COOKIE_FILE, WRITABLE_COOKIE_FILE)
-        USE_COOKIE = True
-        logger.info("✅ Cookie copied successfully to /tmp/cookies.txt")
-    except Exception as e:
-        logger.warning(f"⚠️ Cookie copy failed: {e}")
-else:
-    logger.warning("⚠️ Cookie file not found in /etc/secrets/")
+# اگر می‌خواهی دوباره کوکی فعال شود، این را به True تغییر بده و فایل جدید آپلود کن
+# if os.path.exists(ORIGINAL_COOKIE_FILE):
+#     try:
+#         shutil.copy(ORIGINAL_COOKIE_FILE, WRITABLE_COOKIE_FILE)
+#         USE_COOKIE = True
+#         logger.info("✅ Cookie copied successfully")
+#     except Exception as e:
+#         logger.warning(f"⚠️ Cookie copy failed: {e}")
+# else:
+#     logger.warning("⚠️ Cookie file not found")
 
 
 def get_ydl_opts(format_id=None, output=None, audio_only=False):
@@ -63,7 +65,7 @@ def get_ydl_opts(format_id=None, output=None, audio_only=False):
         "remote_components": ["ejs:github"],
         "extractor_args": {
             "youtube": {
-                "player_client": ["web"],
+                "player_client": ["android"],  # اندروید کلاینت معمولاً بدون کوکی کار می‌کند
                 "skip": ["hls", "dash"]
             }
         },
@@ -72,6 +74,7 @@ def get_ydl_opts(format_id=None, output=None, audio_only=False):
         "trim_file_name": 200,
     }
 
+    # کوکی را فقط در صورت فعال بودن اضافه کن
     if USE_COOKIE:
         opts["cookiefile"] = WRITABLE_COOKIE_FILE
 
@@ -119,7 +122,7 @@ def home():
     return jsonify({
         "status": "ok",
         "message": "VaziriDownloader Server is running",
-        "cookies": "✅ Active" if USE_COOKIE else "❌ Not found",
+        "cookies": "✅ Active" if USE_COOKIE else "❌ Disabled (using android client)",
         "endpoints": {
             "/formats": "POST - Get all available formats",
             "/download": "POST - Download with specific format",
@@ -145,9 +148,18 @@ def get_formats():
         with yt_dlp.YoutubeDL(get_ydl_opts()) as ydl:
             info = ydl.extract_info(url, download=False)
 
+        # ✅ مهم: اگر info برابر None بود، خطا بده
+        if not info:
+            logger.error("❌ YouTube returned no info. Possibly bot detection or invalid URL.")
+            return jsonify({
+                "error": "YouTube اطلاعات ویدیو را برنگرداند. احتمالاً محدودیت ربات یا لینک نامعتبر است."
+            }), 500
+
         all_formats = info.get("formats", [])
 
-        # دسته‌بندی فرمت‌ها
+        if not all_formats:
+            return jsonify({"error": "هیچ فرمتی برای این ویدیو پیدا نشد"}), 404
+
         video_formats = []
         audio_formats = []
         combined_formats = []
@@ -210,7 +222,7 @@ def get_formats():
         })
 
     except Exception as e:
-        logger.error(f"❌ Error: {str(e)}")
+        logger.error(f"❌ Error in /formats: {str(e)}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -254,7 +266,7 @@ def download_video():
         return response
 
     except Exception as e:
-        logger.error(f"❌ Error: {str(e)}")
+        logger.error(f"❌ Error in /download: {str(e)}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -296,7 +308,7 @@ def download_audio():
         return response
 
     except Exception as e:
-        logger.error(f"❌ Error: {str(e)}")
+        logger.error(f"❌ Error in /download_audio: {str(e)}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -335,7 +347,7 @@ def download_best():
         return response
 
     except Exception as e:
-        logger.error(f"❌ Error: {str(e)}")
+        logger.error(f"❌ Error in /download_best: {str(e)}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
