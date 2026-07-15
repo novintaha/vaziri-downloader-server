@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify, send_file
 import yt_dlp
 import os
 import uuid
+import shutil
 import logging
 
 app = Flask(__name__)
@@ -16,107 +17,37 @@ for old_file in os.listdir(DOWNLOAD_FOLDER):
     except Exception:
         pass
 
-# بررسی وجود فایل کوکی
-COOKIE_FILE = "/etc/secrets/cookies.txt"
-USE_COOKIE = os.path.exists(COOKIE_FILE)
+# فایل کوکی اصلی (فقط-خواندنی روی Render)
+ORIGINAL_COOKIE_FILE = "/etc/secrets/cookies.txt"
+# مسیر قابل‌نوشتن که ازش واقعاً استفاده می‌کنیم
+WRITABLE_COOKIE_FILE = "/tmp/cookies.txt"
 
-if USE_COOKIE:
-    logging.info("✅ Cookie file found, using it.")
+USE_COOKIE = False
+if os.path.exists(ORIGINAL_COOKIE_FILE):
+    try:
+        shutil.copy(ORIGINAL_COOKIE_FILE, WRITABLE_COOKIE_FILE)
+        USE_COOKIE = True
+        logging.info("✅ Cookie file copied to writable location.")
+    except Exception as e:
+        logging.warning(f"⚠️ Could not copy cookie file: {e}")
 else:
     logging.warning("⚠️ Cookie file not found, proceeding without cookies.")
 
+
 def get_ydl_opts(format_id=None, output_template=None):
     opts = {
-        "quiet": False,
-        "no_warnings": False,
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "quiet": True,
+        "no_warnings": True,
         "nocheckcertificate": True,
-        "ignoreerrors": True,
         "extractor_args": {
             "youtube": {
-                "player_client": ["web", "android", "ios"],  # اول web، بعد android، بعد ios
-                "skip": ["hls", "dash"]
+                "player_client": ["android"],
             }
         },
     }
     if USE_COOKIE:
-        opts["cookiefile"] = COOKIE_FILE
+        opts["cookiefile"] = WRITABLE_COOKIE_FILE
     if format_id and output_template:
         opts["format"] = format_id
         opts["outtmpl"] = output_template
     else:
-        opts["skip_download"] = True
-    return opts
-
-@app.route("/")
-def home():
-    return jsonify({"status": "ok", "message": "VaziriDownloader Server is running!"})
-
-@app.route("/formats", methods=["POST"])
-def get_formats():
-    data = request.get_json()
-    url = data.get("url")
-    if not url:
-        return jsonify({"error": "لینک ارسال نشده"}), 400
-    try:
-        with yt_dlp.YoutubeDL(get_ydl_opts()) as ydl:
-            info = ydl.extract_info(url, download=False)
-        formats_list = []
-        for f in info.get("formats", []):
-            if f.get("vcodec") != "none" or f.get("acodec") != "none":
-                formats_list.append({
-                    "format_id": f.get("format_id"),
-                    "ext": f.get("ext"),
-                    "resolution": f.get("resolution", "audio only"),
-                    "filesize": f.get("filesize"),
-                })
-        return jsonify({
-            "title": info.get("title"),
-            "thumbnail": info.get("thumbnail"),
-            "duration": info.get("duration"),
-            "formats": formats_list,
-        })
-    except Exception as e:
-        app.logger.error(f"Error in /formats: {str(e)}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/download", methods=["POST"])
-def download_video():
-    data = request.get_json()
-    url = data.get("url")
-    format_id = data.get("format_id")
-    if not url:
-        return jsonify({"error": "لینک ارسال نشده"}), 400
-    if not format_id:
-        format_id = "best"
-    unique_id = str(uuid.uuid4())
-    output_template = os.path.join(DOWNLOAD_FOLDER, f"{unique_id}.%(ext)s")
-    try:
-        try:
-            with yt_dlp.YoutubeDL(get_ydl_opts(format_id, output_template)) as ydl:
-                info = ydl.extract_info(url, download=True)
-                filename = ydl.prepare_filename(info)
-        except Exception as e:
-            if "Requested format is not available" in str(e):
-                app.logger.warning(f"Format {format_id} not available, using 'best'")
-                with yt_dlp.YoutubeDL(get_ydl_opts("best", output_template)) as ydl:
-                    info = ydl.extract_info(url, download=True)
-                    filename = ydl.prepare_filename(info)
-            else:
-                raise e
-        response = send_file(filename, as_attachment=True)
-        @response.call_on_close
-        def cleanup():
-            try:
-                if os.path.exists(filename):
-                    os.remove(filename)
-            except Exception:
-                pass
-        return response
-    except Exception as e:
-        app.logger.error(f"Error in /download: {str(e)}")
-        return jsonify({"error": str(e)}), 500
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
