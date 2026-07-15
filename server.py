@@ -74,11 +74,13 @@ def download_video():
     url = data.get("url")
     format_id = data.get("format_id")
 
-    # اعتبارسنجی ورودی‌ها
+    # اعتبارسنجی لینک
     if not url:
         return jsonify({"error": "لینک ارسال نشده"}), 400
+
+    # **اینجا مشکل قبلی را حل کردیم**: اگر فرمت ارسال نشد یا نامعتبر بود، از "best" استفاده کن
     if not format_id:
-        return jsonify({"error": "فرمت انتخاب نشده"}), 400
+        format_id = "best"
 
     unique_id = str(uuid.uuid4())
     output_template = os.path.join(DOWNLOAD_FOLDER, f"{unique_id}.%(ext)s")
