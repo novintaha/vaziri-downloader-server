@@ -38,6 +38,7 @@ def get_ydl_opts(format_id=None, output_template=None):
         "no_warnings": True,
         "nocheckcertificate": True,
         "ignore_no_formats_error": True,
+        "remote_components": ["ejs:github"],
         "extractor_args": {
             "youtube": {
                 "player_client": ["web", "android"],
