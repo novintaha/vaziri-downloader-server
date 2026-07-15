@@ -7,7 +7,7 @@ app = Flask(__name__)
 DOWNLOAD_FOLDER = "downloads"
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
-# پاک‌سازی فایل‌های قدیمی برای جلوگیری از پر شدن حافظه سرور
+# پاک‌سازی فایل‌های قبلی
 for old_file in os.listdir(DOWNLOAD_FOLDER):
     try:
         os.remove(os.path.join(DOWNLOAD_FOLDER, old_file))
@@ -15,12 +15,13 @@ for old_file in os.listdir(DOWNLOAD_FOLDER):
         pass
 
 def get_ydl_opts(format_id=None, output_template=None):
-    # تنظیمات نهایی: استفاده از کوکی بدون کلاینت اندروید
+    # تنظیمات کاملاً ساده شده برای جلوگیری از شناسایی به عنوان ربات
     opts = {
         "quiet": True,
         "no_warnings": True,
-        "cookiefile": "/etc/secrets/cookies.txt", 
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "nocheckcertificate": True,
+        "ignoreerrors": True,
     }
     if format_id and output_template:
         opts["format"] = format_id
@@ -29,35 +30,17 @@ def get_ydl_opts(format_id=None, output_template=None):
         opts["skip_download"] = True
     return opts
 
-@app.route("/")
-def home():
-    return jsonify({"status": "ok", "message": "VaziriDownloader Server is running!"})
-
 @app.route("/formats", methods=["POST"])
 def get_formats():
     data = request.get_json()
     url = data.get("url")
-    if not url:
-        return jsonify({"error": "لینک ارسال نشده"}), 400
-
+    if not url: return jsonify({"error": "No URL"}), 400
     try:
         with yt_dlp.YoutubeDL(get_ydl_opts()) as ydl:
             info = ydl.extract_info(url, download=False)
-        
-        formats_list = []
-        for f in info.get("formats", []):
-            if f.get("vcodec") != "none" or f.get("acodec") != "none":
-                formats_list.append({
-                    "format_id": f.get("format_id"),
-                    "ext": f.get("ext"),
-                    "resolution": f.get("resolution", "audio only"),
-                    "filesize": f.get("filesize"),
-                })
-        return jsonify({
-            "title": info.get("title"),
-            "thumbnail": info.get("thumbnail"),
-            "formats": formats_list,
-        })
+        formats = [{"format_id": f.get("format_id"), "resolution": f.get("resolution")} 
+                   for f in info.get("formats", []) if f.get("vcodec") != "none"]
+        return jsonify({"title": info.get("title"), "formats": formats})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -66,23 +49,15 @@ def download_video():
     data = request.get_json()
     url = data.get("url")
     format_id = data.get("format_id") or "best"
-
     unique_id = str(uuid.uuid4())
-    output_template = os.path.join(DOWNLOAD_FOLDER, f"{unique_id}.%(ext)s")
+    filename = os.path.join(DOWNLOAD_FOLDER, f"{unique_id}.mp4")
 
     try:
-        with yt_dlp.YoutubeDL(get_ydl_opts(format_id, output_template)) as ydl:
-            info = ydl.extract_info(url, download=True)
-            filename = ydl.prepare_filename(info)
-
-        response = send_file(filename, as_attachment=True)
-        @response.call_on_close
-        def cleanup():
-            if os.path.exists(filename): os.remove(filename)
-        return response
+        with yt_dlp.YoutubeDL(get_ydl_opts(format_id, filename)) as ydl:
+            ydl.download([url])
+        return send_file(filename, as_attachment=True)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
