@@ -37,6 +37,7 @@ def get_ydl_opts(format_id=None, output_template=None):
         "quiet": True,
         "no_warnings": True,
         "nocheckcertificate": True,
+        "ignore_no_formats_error": True,
         "extractor_args": {
             "youtube": {
                 "player_client": ["android", "ios"],
@@ -67,8 +68,10 @@ def get_formats():
     try:
         with yt_dlp.YoutubeDL(get_ydl_opts()) as ydl:
             info = ydl.extract_info(url, download=False)
+
+        raw_formats = info.get("formats") or []
         formats_list = []
-        for f in info.get("formats", []):
+        for f in raw_formats:
             if f.get("vcodec") != "none" or f.get("acodec") != "none":
                 formats_list.append({
                     "format_id": f.get("format_id"),
@@ -76,6 +79,10 @@ def get_formats():
                     "resolution": f.get("resolution", "audio only"),
                     "filesize": f.get("filesize"),
                 })
+
+        if not formats_list:
+            return jsonify({"error": "فرمتی برای این ویدیو پیدا نشد"}), 500
+
         return jsonify({
             "title": info.get("title"),
             "thumbnail": info.get("thumbnail"),
