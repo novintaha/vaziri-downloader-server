@@ -4,9 +4,15 @@ import os
 import uuid
 
 app = Flask(__name__)
-
 DOWNLOAD_FOLDER = "downloads"
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
+
+# پاک کردن فایل‌های قدیمی باقی‌مانده از اجرای قبلی
+for old_file in os.listdir(DOWNLOAD_FOLDER):
+    try:
+        os.remove(os.path.join(DOWNLOAD_FOLDER, old_file))
+    except Exception:
+        pass
 
 
 @app.route("/")
@@ -18,13 +24,13 @@ def home():
 def get_formats():
     data = request.get_json()
     url = data.get("url")
-
     if not url:
         return jsonify({"error": "لینک ارسال نشده"}), 400
 
     ydl_opts = {
         "quiet": True,
         "skip_download": True,
+        "cookiefile": "/etc/secrets/cookies.txt",
     }
 
     try:
@@ -68,6 +74,7 @@ def download_video():
         "quiet": True,
         "format": format_id,
         "outtmpl": output_template,
+        "cookiefile": "/etc/secrets/cookies.txt",
     }
 
     try:
@@ -75,13 +82,21 @@ def download_video():
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
 
-        return send_file(filename, as_attachment=True)
+        response = send_file(filename, as_attachment=True)
+
+        @response.call_on_close
+        def cleanup():
+            try:
+                os.remove(filename)
+            except Exception:
+                pass
+
+        return response
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":
-    import os
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
