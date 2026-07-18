@@ -21,6 +21,22 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# ============== لیست پروکسی‌های شما ==============
+PROXY_LIST = [
+    "http://vchzumtc:7xswbwjck90d@31.59.20.176:6754",
+    "http://vchzumtc:7xswbwjck90d@31.56.127.193:7684",
+    "http://vchzumtc:7xswbwjck90d@45.38.107.97:6014",
+    "http://vchzumtc:7xswbwjck90d@198.105.121.200:6462",
+    "http://vchzumtc:7xswbwjck90d@64.137.96.74:6641",
+    "http://vchzumtc:7xswbwjck90d@198.23.243.226:6361",
+    "http://vchzumtc:7xswbwjck90d@38.154.185.97:6370",
+    "http://vchzumtc:7xswbwjck90d@84.247.60.125:6095",
+    "http://vchzumtc:7xswbwjck90d@142.111.67.146:5611",
+    "http://vchzumtc:7xswbwjck90d@191.96.254.138:6185",
+]
+# ===============================================
+
+
 @app.before_request
 def log_request():
     logger.info(f"📥 {request.method} {request.path}")
@@ -44,12 +60,9 @@ ORIGINAL_COOKIE_FILE = "/etc/secrets/cookies.txt"
 WRITABLE_COOKIE_FILE = "/tmp/cookies.txt"
 USE_COOKIE = False
 
-# پروکسی Webshare (اگه کار نکرد، حذفش کن)
-WEBSHARE_PROXY = "http://vchzumtc:7xswbwjck90d@31.59.20.176:6754"
-USE_PROXY = True  # اگه پروکسی مشکل داشت، False کن
 
-
-def get_ydl_opts(format_id=None, output=None, audio_only=False):
+def get_ydl_opts_with_proxy(format_id=None, output=None, audio_only=False, proxy=None):
+    """تنظیمات yt-dlp با یک پروکسی مشخص"""
     opts = {
         "quiet": False,
         "verbose": True,
@@ -57,15 +70,15 @@ def get_ydl_opts(format_id=None, output=None, audio_only=False):
         "nocheckcertificate": True,
         "ignoreerrors": True,
         "noprogress": True,
-        "no_part": True,          # دانلود کامل فایل بدون بخش‌بندی
-        "no_mtime": True,         # عدم تغییر زمان فایل
+        "no_part": True,
+        "no_mtime": True,
         "remote_components": ["ejs:github"],
         "extractor_args": {
             "youtube": {
                 "player_client": ["android"],
                 "skip": ["hls", "dash"],
                 "sleep_interval": 3,
-                "extractor_retries": 3,
+                "extractor_retries": 2,
             }
         },
         "user_agent": "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36",
@@ -73,9 +86,9 @@ def get_ydl_opts(format_id=None, output=None, audio_only=False):
         "trim_file_name": 200,
     }
 
-    if USE_PROXY and WEBSHARE_PROXY:
-        opts["proxy"] = WEBSHARE_PROXY
-        logger.info("🌐 Using proxy for download")
+    if proxy:
+        opts["proxy"] = proxy
+        logger.info(f"🌐 Trying proxy: {proxy.split('@')[-1] if '@' in proxy else proxy}")
 
     if USE_COOKIE:
         opts["cookiefile"] = WRITABLE_COOKIE_FILE
@@ -98,6 +111,40 @@ def get_ydl_opts(format_id=None, output=None, audio_only=False):
             opts["outtmpl"] = output
 
     return opts
+
+
+def try_download_with_proxies(url, format_id, output, audio_only=False):
+    """همه‌ی پروکسی‌ها رو یکی‌یکی امتحان کن تا یکی جواب بده"""
+    last_error = None
+
+    for i, proxy in enumerate(PROXY_LIST):
+        try:
+            logger.info(f"🔄 Trying proxy {i+1}/{len(PROXY_LIST)}...")
+            
+            opts = get_ydl_opts_with_proxy(format_id, output, audio_only, proxy)
+            
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                if audio_only:
+                    ydl.download([url])
+                    filename = output.replace(".%(ext)s", ".mp3")
+                else:
+                    info = ydl.extract_info(url, download=True)
+                    filename = ydl.prepare_filename(info)
+                
+                if os.path.exists(filename):
+                    logger.info(f"✅ Success with proxy {i+1}")
+                    return filename
+                else:
+                    raise Exception("File not created")
+                    
+        except Exception as e:
+            error_msg = str(e)
+            logger.warning(f"❌ Proxy {i+1} failed: {error_msg[:100]}")
+            last_error = e
+            continue
+
+    # اگه هیچ پروکسی‌ای جواب نداد
+    raise Exception(f"All proxies failed. Last error: {last_error}")
 
 
 def format_file_size(size_bytes):
@@ -124,7 +171,7 @@ def home():
     return jsonify({
         "status": "ok",
         "message": "VaziriDownloader Server is running",
-        "proxy": "✅ Active" if USE_PROXY else "❌ Disabled",
+        "proxies_count": len(PROXY_LIST),
         "endpoints": {
             "/formats": "POST - Get all available formats",
             "/download": "POST - Download with specific format",
@@ -147,14 +194,24 @@ def get_formats():
 
         logger.info(f"🔍 Getting formats for: {url}")
 
-        with yt_dlp.YoutubeDL(get_ydl_opts()) as ydl:
-            info = ydl.extract_info(url, download=False)
+        # برای گرفتن فرمت‌ها هم پروکسی رو امتحان می‌کنیم
+        last_error = None
+        for i, proxy in enumerate(PROXY_LIST):
+            try:
+                logger.info(f"🔄 Trying proxy {i+1} for formats...")
+                opts = get_ydl_opts_with_proxy(proxy=proxy)
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    break  # اگه موفق شد، از حلقه خارج شو
+            except Exception as e:
+                logger.warning(f"❌ Proxy {i+1} failed for formats: {str(e)[:100]}")
+                last_error = e
+                if i == len(PROXY_LIST) - 1:
+                    raise last_error
+                continue
 
         if not info:
-            logger.error("❌ YouTube returned no info.")
-            return jsonify({
-                "error": "YouTube اطلاعات ویدیو را برنگرداند."
-            }), 500
+            return jsonify({"error": "YouTube اطلاعات ویدیو را برنگرداند."}), 500
 
         all_formats = info.get("formats", [])
 
@@ -214,34 +271,20 @@ def download_video():
         filename_id = str(uuid.uuid4())
         output = os.path.join(DOWNLOAD_FOLDER, f"{filename_id}.%(ext)s")
 
-        with yt_dlp.YoutubeDL(get_ydl_opts(format_id, output)) as ydl:
-            info = ydl.extract_info(url, download=True)
-            filename = ydl.prepare_filename(info)
-
-        if not os.path.exists(filename):
-            logger.error(f"❌ File not found after download: {filename}")
-            # بررسی فایل‌های مشابه با نام متفاوت
-            for f in os.listdir(DOWNLOAD_FOLDER):
-                if f.startswith(filename_id):
-                    filename = os.path.join(DOWNLOAD_FOLDER, f)
-                    logger.info(f"🔍 Found alternative file: {filename}")
-                    break
-            else:
-                raise FileNotFoundError(f"File not found: {filename}")
+        # امتحان کردن همه‌ی پروکسی‌ها
+        filename = try_download_with_proxies(url, format_id, output, audio_only=False)
 
         logger.info(f"✅ Download complete: {os.path.basename(filename)} (size: {os.path.getsize(filename)} bytes)")
 
-        # ارسال فایل به کلاینت
         response = send_file(
             filename,
             as_attachment=True,
             download_name=os.path.basename(filename)
         )
 
-        # پاک‌سازی بعد از ارسال کامل (با تاخیر ۵ ثانیه)
         @response.call_on_close
         def cleanup():
-            time.sleep(5)  # صبر کن تا کلاینت کامل دریافت کنه
+            time.sleep(5)
             try:
                 if os.path.exists(filename):
                     os.remove(filename)
@@ -273,12 +316,7 @@ def download_audio():
         filename_id = str(uuid.uuid4())
         output = os.path.join(DOWNLOAD_FOLDER, f"{filename_id}.%(ext)s")
 
-        opts = get_ydl_opts(audio_only=True, output=output)
-
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            ydl.download([url])
-
-        filename = os.path.join(DOWNLOAD_FOLDER, f"{filename_id}.mp3")
+        filename = try_download_with_proxies(url, None, output, audio_only=True)
 
         if not os.path.exists(filename):
             raise FileNotFoundError(f"MP3 not found: {filename}")
@@ -288,7 +326,7 @@ def download_audio():
         response = send_file(
             filename,
             as_attachment=True,
-            download_name=f"{filename_id}.mp3"
+            download_name=os.path.basename(filename)
         )
 
         @response.call_on_close
@@ -325,12 +363,7 @@ def download_best():
         filename_id = str(uuid.uuid4())
         output = os.path.join(DOWNLOAD_FOLDER, f"{filename_id}.%(ext)s")
 
-        with yt_dlp.YoutubeDL(get_ydl_opts("bestvideo+bestaudio/best", output)) as ydl:
-            info = ydl.extract_info(url, download=True)
-            filename = ydl.prepare_filename(info)
-
-        if not os.path.exists(filename):
-            raise FileNotFoundError(f"File not found: {filename}")
+        filename = try_download_with_proxies(url, "bestvideo+bestaudio/best", output, audio_only=False)
 
         logger.info(f"✅ Best quality download complete: {os.path.basename(filename)}")
 
@@ -361,4 +394,5 @@ def download_best():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     logger.info(f"🚀 Starting server on port {port}")
+    logger.info(f"📋 Loaded {len(PROXY_LIST)} proxies")
     app.run(host="0.0.0.0", port=port, debug=False)
