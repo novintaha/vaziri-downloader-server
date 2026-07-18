@@ -5,6 +5,7 @@ import uuid
 import shutil
 import logging
 import traceback
+import time
 from pathlib import Path
 from datetime import timedelta
 
@@ -43,7 +44,9 @@ ORIGINAL_COOKIE_FILE = "/etc/secrets/cookies.txt"
 WRITABLE_COOKIE_FILE = "/tmp/cookies.txt"
 USE_COOKIE = False
 
+# پروکسی Webshare (اگه کار نکرد، حذفش کن)
 WEBSHARE_PROXY = "http://vchzumtc:7xswbwjck90d@31.59.20.176:6754"
+USE_PROXY = True  # اگه پروکسی مشکل داشت، False کن
 
 
 def get_ydl_opts(format_id=None, output=None, audio_only=False):
@@ -53,20 +56,26 @@ def get_ydl_opts(format_id=None, output=None, audio_only=False):
         "no_warnings": False,
         "nocheckcertificate": True,
         "ignoreerrors": True,
-        "proxy": WEBSHARE_PROXY,
+        "noprogress": True,
+        "no_part": True,          # دانلود کامل فایل بدون بخش‌بندی
+        "no_mtime": True,         # عدم تغییر زمان فایل
         "remote_components": ["ejs:github"],
         "extractor_args": {
             "youtube": {
-                "player_client": ["android"],  # فقط اندروید، چون SABR نداره
+                "player_client": ["android"],
                 "skip": ["hls", "dash"],
-                "sleep_interval": 5,
-                "extractor_retries": 5,
+                "sleep_interval": 3,
+                "extractor_retries": 3,
             }
         },
         "user_agent": "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36",
         "restrictfilenames": True,
         "trim_file_name": 200,
     }
+
+    if USE_PROXY and WEBSHARE_PROXY:
+        opts["proxy"] = WEBSHARE_PROXY
+        logger.info("🌐 Using proxy for download")
 
     if USE_COOKIE:
         opts["cookiefile"] = WRITABLE_COOKIE_FILE
@@ -115,7 +124,7 @@ def home():
     return jsonify({
         "status": "ok",
         "message": "VaziriDownloader Server is running",
-        "proxy": "✅ Active (Webshare)",
+        "proxy": "✅ Active" if USE_PROXY else "❌ Disabled",
         "endpoints": {
             "/formats": "POST - Get all available formats",
             "/download": "POST - Download with specific format",
@@ -144,7 +153,7 @@ def get_formats():
         if not info:
             logger.error("❌ YouTube returned no info.")
             return jsonify({
-                "error": "YouTube اطلاعات ویدیو را برنگرداند. احتمالاً ویدیو DRM دارد یا محدودیت سنی."
+                "error": "YouTube اطلاعات ویدیو را برنگرداند."
             }), 500
 
         all_formats = info.get("formats", [])
@@ -154,10 +163,8 @@ def get_formats():
 
         logger.info(f"✅ Found {len(all_formats)} total formats")
 
-        # فیلتر فرمت‌های معتبر (با URL و بدون DRM)
         formats_list = []
         for f in all_formats:
-            # فقط فرمت‌هایی که URL دارند و DRM نیستند
             if f.get("url") and not f.get("has_drm", False):
                 formats_list.append({
                     "format_id": f.get("format_id"),
@@ -170,7 +177,7 @@ def get_formats():
                 })
 
         if not formats_list:
-            return jsonify({"error": "هیچ فرمت قابل دانلودی برای این ویدیو پیدا نشد (احتمالاً DRM دارد)"}), 404
+            return jsonify({"error": "هیچ فرمت قابل دانلودی پیدا نشد"}), 404
 
         return jsonify({
             "title": info.get("title"),
@@ -200,6 +207,9 @@ def download_video():
 
         if not format_id:
             format_id = "best"
+            logger.info(f"ℹ️ No format_id provided, using 'best'")
+
+        logger.info(f"⬇️ Downloading: {url} with format: {format_id}")
 
         filename_id = str(uuid.uuid4())
         output = os.path.join(DOWNLOAD_FOLDER, f"{filename_id}.%(ext)s")
@@ -209,17 +219,35 @@ def download_video():
             filename = ydl.prepare_filename(info)
 
         if not os.path.exists(filename):
-            raise FileNotFoundError(f"File not found: {filename}")
+            logger.error(f"❌ File not found after download: {filename}")
+            # بررسی فایل‌های مشابه با نام متفاوت
+            for f in os.listdir(DOWNLOAD_FOLDER):
+                if f.startswith(filename_id):
+                    filename = os.path.join(DOWNLOAD_FOLDER, f)
+                    logger.info(f"🔍 Found alternative file: {filename}")
+                    break
+            else:
+                raise FileNotFoundError(f"File not found: {filename}")
 
-        response = send_file(filename, as_attachment=True)
+        logger.info(f"✅ Download complete: {os.path.basename(filename)} (size: {os.path.getsize(filename)} bytes)")
 
+        # ارسال فایل به کلاینت
+        response = send_file(
+            filename,
+            as_attachment=True,
+            download_name=os.path.basename(filename)
+        )
+
+        # پاک‌سازی بعد از ارسال کامل (با تاخیر ۵ ثانیه)
         @response.call_on_close
         def cleanup():
+            time.sleep(5)  # صبر کن تا کلاینت کامل دریافت کنه
             try:
                 if os.path.exists(filename):
                     os.remove(filename)
-            except:
-                pass
+                    logger.info(f"🗑️ Cleaned up: {os.path.basename(filename)}")
+            except Exception as e:
+                logger.warning(f"⚠️ Cleanup failed: {e}")
 
         return response
 
@@ -240,6 +268,8 @@ def download_audio():
         if not url:
             return jsonify({"error": "لینک ارسال نشده"}), 400
 
+        logger.info(f"🎵 Downloading audio from: {url}")
+
         filename_id = str(uuid.uuid4())
         output = os.path.join(DOWNLOAD_FOLDER, f"{filename_id}.%(ext)s")
 
@@ -253,15 +283,23 @@ def download_audio():
         if not os.path.exists(filename):
             raise FileNotFoundError(f"MP3 not found: {filename}")
 
-        response = send_file(filename, as_attachment=True)
+        logger.info(f"✅ Audio download complete: {os.path.basename(filename)}")
+
+        response = send_file(
+            filename,
+            as_attachment=True,
+            download_name=f"{filename_id}.mp3"
+        )
 
         @response.call_on_close
         def cleanup():
+            time.sleep(5)
             try:
                 if os.path.exists(filename):
                     os.remove(filename)
-            except:
-                pass
+                    logger.info(f"🗑️ Cleaned up: {os.path.basename(filename)}")
+            except Exception as e:
+                logger.warning(f"⚠️ Cleanup failed: {e}")
 
         return response
 
@@ -282,6 +320,8 @@ def download_best():
         if not url:
             return jsonify({"error": "لینک ارسال نشده"}), 400
 
+        logger.info(f"🌟 Downloading best quality from: {url}")
+
         filename_id = str(uuid.uuid4())
         output = os.path.join(DOWNLOAD_FOLDER, f"{filename_id}.%(ext)s")
 
@@ -292,15 +332,23 @@ def download_best():
         if not os.path.exists(filename):
             raise FileNotFoundError(f"File not found: {filename}")
 
-        response = send_file(filename, as_attachment=True)
+        logger.info(f"✅ Best quality download complete: {os.path.basename(filename)}")
+
+        response = send_file(
+            filename,
+            as_attachment=True,
+            download_name=os.path.basename(filename)
+        )
 
         @response.call_on_close
         def cleanup():
+            time.sleep(5)
             try:
                 if os.path.exists(filename):
                     os.remove(filename)
-            except:
-                pass
+                    logger.info(f"🗑️ Cleaned up: {os.path.basename(filename)}")
+            except Exception as e:
+                logger.warning(f"⚠️ Cleanup failed: {e}")
 
         return response
 
