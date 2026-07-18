@@ -39,12 +39,10 @@ def cleanup_old_files():
 
 cleanup_old_files()
 
-# کوکی را موقتاً غیرفعال می‌کنیم (چون نامعتبر است)
 ORIGINAL_COOKIE_FILE = "/etc/secrets/cookies.txt"
 WRITABLE_COOKIE_FILE = "/tmp/cookies.txt"
-USE_COOKIE = False  # <-- مهم: کوکی را خاموش کردیم
+USE_COOKIE = False
 
-# پروکسی رایگان Webshare برای دور زدن مسدودیت آی‌پی
 WEBSHARE_PROXY = "http://vchzumtc:7xswbwjck90d@31.59.20.176:6754"
 
 
@@ -59,7 +57,7 @@ def get_ydl_opts(format_id=None, output=None, audio_only=False):
         "remote_components": ["ejs:github"],
         "extractor_args": {
             "youtube": {
-                "player_client": ["android", "web"],  # android برای فرمت‌های HTTPS مستقیم (بدون SABR)، web به عنوان بک‌آپ
+                "player_client": ["android", "web"],
                 "skip": ["hls", "dash"]
             }
         },
@@ -68,7 +66,6 @@ def get_ydl_opts(format_id=None, output=None, audio_only=False):
         "trim_file_name": 200,
     }
 
-    # کوکی را فقط در صورت فعال بودن اضافه کن
     if USE_COOKIE:
         opts["cookiefile"] = WRITABLE_COOKIE_FILE
 
@@ -116,7 +113,6 @@ def home():
     return jsonify({
         "status": "ok",
         "message": "VaziriDownloader Server is running",
-        "cookies": "✅ Active" if USE_COOKIE else "❌ Disabled (using proxy + android/web client)",
         "proxy": "✅ Active (Webshare)",
         "endpoints": {
             "/formats": "POST - Get all available formats",
@@ -193,26 +189,12 @@ def get_formats():
             "like_count": info.get("like_count"),
         }
 
-        summary = {
-            "total": len(all_formats),
-            "video_only": len(video_formats),
-            "audio_only": len(audio_formats),
-            "video_audio": len(combined_formats)
-        }
-
+        # ✅ formats به‌صورت آرایه‌ی ساده (مطابق مدل اپ اندروید)
         return jsonify({
-            "video_info": video_info,
-            "summary": summary,
-            "formats": {
-                "video": video_formats,
-                "audio": audio_formats,
-                "video_audio": combined_formats
-            },
-            "recommended": {
-                "best_video": video_formats[0] if video_formats else None,
-                "best_audio": audio_formats[0] if audio_formats else None,
-                "best_combined": combined_formats[0] if combined_formats else None
-            }
+            "title": video_info.get("title"),
+            "thumbnail": video_info.get("thumbnail"),
+            "duration": info.get("duration"),
+            "formats": combined_formats + video_formats + audio_formats
         })
 
     except Exception as e:
