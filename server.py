@@ -48,18 +48,15 @@ USE_COOKIE = False  # <-- مهم: کوکی را خاموش کردیم
 def get_ydl_opts(format_id=None, output=None, audio_only=False):
     opts = {
         "quiet": False,
-        "verbose": True,  # <-- اضافه شد: برای دیدن اینکه POT provider شناسایی میشه یا نه
+        "verbose": True,  # برای دیدن اینکه POT provider استفاده میشه یا نه
         "no_warnings": False,
         "nocheckcertificate": True,
         "ignoreerrors": True,
         "remote_components": ["ejs:github"],
         "extractor_args": {
             "youtube": {
-                "player_client": ["android"],  # اندروید کلاینت معمولاً بدون کوکی کار می‌کند
+                "player_client": ["web", "tv"],  # web برای استفاده از POT Token (bgutil)، tv به عنوان بک‌آپ
                 "skip": ["hls", "dash"]
-            },
-            "youtubepot-bgutilhttp": {
-                "base_url": ["http://127.0.0.1:4416"]  # <-- اضافه شد: آدرس صریح سرور POT محلی
             }
         },
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -115,7 +112,7 @@ def home():
     return jsonify({
         "status": "ok",
         "message": "VaziriDownloader Server is running",
-        "cookies": "✅ Active" if USE_COOKIE else "❌ Disabled (using android client)",
+        "cookies": "✅ Active" if USE_COOKIE else "❌ Disabled (using web+tv client with POT)",
         "endpoints": {
             "/formats": "POST - Get all available formats",
             "/download": "POST - Download with specific format",
