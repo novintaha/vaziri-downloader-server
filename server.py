@@ -44,18 +44,22 @@ ORIGINAL_COOKIE_FILE = "/etc/secrets/cookies.txt"
 WRITABLE_COOKIE_FILE = "/tmp/cookies.txt"
 USE_COOKIE = False  # <-- مهم: کوکی را خاموش کردیم
 
+# پروکسی رایگان Webshare برای دور زدن مسدودیت آی‌پی
+WEBSHARE_PROXY = "http://vchzumtc:7xswbwjck90d@31.59.20.176:6754"
+
 
 def get_ydl_opts(format_id=None, output=None, audio_only=False):
     opts = {
         "quiet": False,
-        "verbose": True,  # برای دیدن اینکه POT provider استفاده میشه یا نه
+        "verbose": True,  # برای دیدن اینکه POT provider و پروکسی درست کار می‌کنن
         "no_warnings": False,
         "nocheckcertificate": True,
         "ignoreerrors": True,
+        "proxy": WEBSHARE_PROXY,  # <-- اضافه شد: پروکسی برای دور زدن بلاک آی‌پی Render
         "remote_components": ["ejs:github"],
         "extractor_args": {
             "youtube": {
-                "player_client": ["web", "tv"],  # web برای استفاده از POT Token (bgutil)، tv به عنوان بک‌آپ
+                "player_client": ["web", "tv"],
                 "skip": ["hls", "dash"]
             }
         },
@@ -112,7 +116,8 @@ def home():
     return jsonify({
         "status": "ok",
         "message": "VaziriDownloader Server is running",
-        "cookies": "✅ Active" if USE_COOKIE else "❌ Disabled (using web+tv client with POT)",
+        "cookies": "✅ Active" if USE_COOKIE else "❌ Disabled (using proxy + web/tv client)",
+        "proxy": "✅ Active (Webshare)",
         "endpoints": {
             "/formats": "POST - Get all available formats",
             "/download": "POST - Download with specific format",
