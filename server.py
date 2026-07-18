@@ -43,6 +43,7 @@ ORIGINAL_COOKIE_FILE = "/etc/secrets/cookies.txt"
 WRITABLE_COOKIE_FILE = "/tmp/cookies.txt"
 USE_COOKIE = False
 
+# پروکسی Webshare (اگه کار نکرد، عوضش کن)
 WEBSHARE_PROXY = "http://vchzumtc:7xswbwjck90d@31.59.20.176:6754"
 
 
@@ -57,8 +58,11 @@ def get_ydl_opts(format_id=None, output=None, audio_only=False):
         "remote_components": ["ejs:github"],
         "extractor_args": {
             "youtube": {
-                "player_client": ["android", "web"],
-                "skip": ["hls", "dash"]
+                "player_client": ["tv", "web"],  # TV کلاینت کمتر SABR رو اعمال می‌کنه
+                "skip": ["hls", "dash"],
+                "disable_sabr": True,  # غیرفعال کردن SABR
+                "sleep_interval": 5,   # تاخیر بین درخواست‌ها
+                "extractor_retries": 5, # تعداد تلاش مجدد
             }
         },
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -140,9 +144,9 @@ def get_formats():
             info = ydl.extract_info(url, download=False)
 
         if not info:
-            logger.error("❌ YouTube returned no info. Possibly bot detection or invalid URL.")
+            logger.error("❌ YouTube returned no info.")
             return jsonify({
-                "error": "YouTube اطلاعات ویدیو را برنگرداند. احتمالاً محدودیت ربات یا لینک نامعتبر است."
+                "error": "YouTube اطلاعات ویدیو را برنگرداند."
             }), 500
 
         all_formats = info.get("formats", [])
@@ -150,51 +154,26 @@ def get_formats():
         if not all_formats:
             return jsonify({"error": "هیچ فرمتی برای این ویدیو پیدا نشد"}), 404
 
-        video_formats = []
-        audio_formats = []
-        combined_formats = []
+        logger.info(f"✅ Found {len(all_formats)} total formats")
 
+        # همه‌ی فرمت‌ها رو بدون فیلتر برمی‌گردونیم
+        formats_list = []
         for f in all_formats:
-            format_info = {
+            formats_list.append({
                 "format_id": f.get("format_id"),
                 "ext": f.get("ext", "unknown"),
                 "resolution": f.get("resolution", "unknown"),
-                "filesize_human": format_file_size(f.get("filesize")),
+                "filesize": f.get("filesize"),
                 "vcodec": f.get("vcodec", "none"),
                 "acodec": f.get("acodec", "none"),
-                "fps": f.get("fps"),
-                "tbr": f.get("tbr"),
-                "vbr": f.get("vbr"),
-                "abr": f.get("abr"),
                 "format_note": f.get("format_note", ""),
-                "quality": f.get("quality", 0)
-            }
+            })
 
-            has_video = f.get("vcodec") != "none"
-            has_audio = f.get("acodec") != "none"
-
-            if has_video and has_audio:
-                combined_formats.append(format_info)
-            elif has_video and not has_audio:
-                video_formats.append(format_info)
-            elif not has_video and has_audio:
-                audio_formats.append(format_info)
-
-        video_info = {
+        return jsonify({
             "title": info.get("title"),
             "thumbnail": info.get("thumbnail"),
-            "duration_human": format_duration(info.get("duration")),
-            "uploader": info.get("uploader"),
-            "view_count": info.get("view_count"),
-            "like_count": info.get("like_count"),
-        }
-
-        # ✅ formats به‌صورت آرایه‌ی ساده (مطابق مدل اپ اندروید)
-        return jsonify({
-            "title": video_info.get("title"),
-            "thumbnail": video_info.get("thumbnail"),
             "duration": info.get("duration"),
-            "formats": combined_formats + video_formats + audio_formats
+            "formats": formats_list
         })
 
     except Exception as e:
