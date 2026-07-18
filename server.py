@@ -44,21 +44,11 @@ ORIGINAL_COOKIE_FILE = "/etc/secrets/cookies.txt"
 WRITABLE_COOKIE_FILE = "/tmp/cookies.txt"
 USE_COOKIE = False  # <-- مهم: کوکی را خاموش کردیم
 
-# اگر می‌خواهی دوباره کوکی فعال شود، این را به True تغییر بده و فایل جدید آپلود کن
-# if os.path.exists(ORIGINAL_COOKIE_FILE):
-#     try:
-#         shutil.copy(ORIGINAL_COOKIE_FILE, WRITABLE_COOKIE_FILE)
-#         USE_COOKIE = True
-#         logger.info("✅ Cookie copied successfully")
-#     except Exception as e:
-#         logger.warning(f"⚠️ Cookie copy failed: {e}")
-# else:
-#     logger.warning("⚠️ Cookie file not found")
-
 
 def get_ydl_opts(format_id=None, output=None, audio_only=False):
     opts = {
         "quiet": False,
+        "verbose": True,  # <-- اضافه شد: برای دیدن اینکه POT provider شناسایی میشه یا نه
         "no_warnings": False,
         "nocheckcertificate": True,
         "ignoreerrors": True,
@@ -67,6 +57,9 @@ def get_ydl_opts(format_id=None, output=None, audio_only=False):
             "youtube": {
                 "player_client": ["android"],  # اندروید کلاینت معمولاً بدون کوکی کار می‌کند
                 "skip": ["hls", "dash"]
+            },
+            "youtubepot-bgutilhttp": {
+                "base_url": ["http://127.0.0.1:4416"]  # <-- اضافه شد: آدرس صریح سرور POT محلی
             }
         },
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -148,7 +141,6 @@ def get_formats():
         with yt_dlp.YoutubeDL(get_ydl_opts()) as ydl:
             info = ydl.extract_info(url, download=False)
 
-        # ✅ مهم: اگر info برابر None بود، خطا بده
         if not info:
             logger.error("❌ YouTube returned no info. Possibly bot detection or invalid URL.")
             return jsonify({
