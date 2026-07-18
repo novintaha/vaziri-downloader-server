@@ -51,15 +51,15 @@ WEBSHARE_PROXY = "http://vchzumtc:7xswbwjck90d@31.59.20.176:6754"
 def get_ydl_opts(format_id=None, output=None, audio_only=False):
     opts = {
         "quiet": False,
-        "verbose": True,  # برای دیدن اینکه POT provider و پروکسی درست کار می‌کنن
+        "verbose": True,
         "no_warnings": False,
         "nocheckcertificate": True,
         "ignoreerrors": True,
-        "proxy": WEBSHARE_PROXY,  # <-- اضافه شد: پروکسی برای دور زدن بلاک آی‌پی Render
+        "proxy": WEBSHARE_PROXY,
         "remote_components": ["ejs:github"],
         "extractor_args": {
             "youtube": {
-                "player_client": ["web", "tv"],
+                "player_client": ["android", "web"],  # android برای فرمت‌های HTTPS مستقیم (بدون SABR)، web به عنوان بک‌آپ
                 "skip": ["hls", "dash"]
             }
         },
@@ -116,7 +116,7 @@ def home():
     return jsonify({
         "status": "ok",
         "message": "VaziriDownloader Server is running",
-        "cookies": "✅ Active" if USE_COOKIE else "❌ Disabled (using proxy + web/tv client)",
+        "cookies": "✅ Active" if USE_COOKIE else "❌ Disabled (using proxy + android/web client)",
         "proxy": "✅ Active (Webshare)",
         "endpoints": {
             "/formats": "POST - Get all available formats",
