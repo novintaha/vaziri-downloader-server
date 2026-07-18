@@ -43,7 +43,6 @@ ORIGINAL_COOKIE_FILE = "/etc/secrets/cookies.txt"
 WRITABLE_COOKIE_FILE = "/tmp/cookies.txt"
 USE_COOKIE = False
 
-# پروکسی Webshare (اگه کار نکرد، عوضش کن)
 WEBSHARE_PROXY = "http://vchzumtc:7xswbwjck90d@31.59.20.176:6754"
 
 
@@ -58,14 +57,13 @@ def get_ydl_opts(format_id=None, output=None, audio_only=False):
         "remote_components": ["ejs:github"],
         "extractor_args": {
             "youtube": {
-                "player_client": ["tv", "web"],  # TV کلاینت کمتر SABR رو اعمال می‌کنه
+                "player_client": ["android"],  # فقط اندروید، چون SABR نداره
                 "skip": ["hls", "dash"],
-                "disable_sabr": True,  # غیرفعال کردن SABR
-                "sleep_interval": 5,   # تاخیر بین درخواست‌ها
-                "extractor_retries": 5, # تعداد تلاش مجدد
+                "sleep_interval": 5,
+                "extractor_retries": 5,
             }
         },
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "user_agent": "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36",
         "restrictfilenames": True,
         "trim_file_name": 200,
     }
@@ -146,7 +144,7 @@ def get_formats():
         if not info:
             logger.error("❌ YouTube returned no info.")
             return jsonify({
-                "error": "YouTube اطلاعات ویدیو را برنگرداند."
+                "error": "YouTube اطلاعات ویدیو را برنگرداند. احتمالاً ویدیو DRM دارد یا محدودیت سنی."
             }), 500
 
         all_formats = info.get("formats", [])
@@ -156,18 +154,23 @@ def get_formats():
 
         logger.info(f"✅ Found {len(all_formats)} total formats")
 
-        # همه‌ی فرمت‌ها رو بدون فیلتر برمی‌گردونیم
+        # فیلتر فرمت‌های معتبر (با URL و بدون DRM)
         formats_list = []
         for f in all_formats:
-            formats_list.append({
-                "format_id": f.get("format_id"),
-                "ext": f.get("ext", "unknown"),
-                "resolution": f.get("resolution", "unknown"),
-                "filesize": f.get("filesize"),
-                "vcodec": f.get("vcodec", "none"),
-                "acodec": f.get("acodec", "none"),
-                "format_note": f.get("format_note", ""),
-            })
+            # فقط فرمت‌هایی که URL دارند و DRM نیستند
+            if f.get("url") and not f.get("has_drm", False):
+                formats_list.append({
+                    "format_id": f.get("format_id"),
+                    "ext": f.get("ext", "unknown"),
+                    "resolution": f.get("resolution", "unknown"),
+                    "filesize": f.get("filesize"),
+                    "vcodec": f.get("vcodec", "none"),
+                    "acodec": f.get("acodec", "none"),
+                    "format_note": f.get("format_note", ""),
+                })
+
+        if not formats_list:
+            return jsonify({"error": "هیچ فرمت قابل دانلودی برای این ویدیو پیدا نشد (احتمالاً DRM دارد)"}), 404
 
         return jsonify({
             "title": info.get("title"),
