@@ -2,7 +2,8 @@ from flask import Flask, request, jsonify, send_file
 import yt_dlp
 import os
 import uuid
-import shutil
+import glob
+import subprocess
 import logging
 import traceback
 import time
@@ -21,7 +22,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ============== لیست پروکسی‌های شما ==============
 PROXY_LIST = [
     "http://vchzumtc:7xswbwjck90d@31.59.20.176:6754",
     "http://vchzumtc:7xswbwjck90d@31.56.127.193:7684",
@@ -34,7 +34,6 @@ PROXY_LIST = [
     "http://vchzumtc:7xswbwjck90d@142.111.67.146:5611",
     "http://vchzumtc:7xswbwjck90d@191.96.254.138:6185",
 ]
-# ===============================================
 
 
 @app.before_request
@@ -49,20 +48,17 @@ def cleanup_old_files():
     for old_file in os.listdir(DOWNLOAD_FOLDER):
         try:
             os.remove(os.path.join(DOWNLOAD_FOLDER, old_file))
-            logger.info(f"🗑️ Removed old file: {old_file}")
         except Exception as e:
             logger.warning(f"Could not remove {old_file}: {e}")
 
 
 cleanup_old_files()
 
-ORIGINAL_COOKIE_FILE = "/etc/secrets/cookies.txt"
-WRITABLE_COOKIE_FILE = "/tmp/cookies.txt"
 USE_COOKIE = False
+WRITABLE_COOKIE_FILE = "/tmp/cookies.txt"
 
 
-def get_ydl_opts_with_proxy(format_id=None, output=None, audio_only=False, proxy=None):
-    """تنظیمات yt-dlp با یک پروکسی مشخص"""
+def get_ydl_opts_with_proxy(format_id=None, output=None, audio_only=False, proxy=None, use_subtitles=False):
     opts = {
         "quiet": False,
         "verbose": True,
@@ -88,10 +84,15 @@ def get_ydl_opts_with_proxy(format_id=None, output=None, audio_only=False, proxy
 
     if proxy:
         opts["proxy"] = proxy
-        logger.info(f"🌐 Trying proxy: {proxy.split('@')[-1] if '@' in proxy else proxy}")
 
     if USE_COOKIE:
         opts["cookiefile"] = WRITABLE_COOKIE_FILE
+
+    if use_subtitles:
+        opts["writesubtitles"] = True
+        opts["writeautomaticsub"] = True
+        opts["subtitleslangs"] = ["fa"]
+        opts["subtitlesformat"] = "vtt"
 
     if audio_only:
         opts["format"] = "bestaudio/best"
@@ -113,16 +114,51 @@ def get_ydl_opts_with_proxy(format_id=None, output=None, audio_only=False, proxy
     return opts
 
 
-def try_download_with_proxies(url, format_id, output, audio_only=False):
-    """همه‌ی پروکسی‌ها رو یکی‌یکی امتحان کن تا یکی جواب بده"""
+def burn_subtitles(video_path, filename_id):
+    """اگه فایل زیرنویس فارسی پیدا شد، با ffmpeg بچسبونش به ویدیو"""
+    subtitle_matches = glob.glob(os.path.join(DOWNLOAD_FOLDER, f"{filename_id}*.fa.vtt"))
+    if not subtitle_matches:
+        logger.warning("⚠️ No Persian subtitle file found, skipping burn-in")
+        return video_path
+
+    subtitle_path = subtitle_matches[0]
+    output_path = os.path.join(DOWNLOAD_FOLDER, f"{filename_id}_subbed.mp4")
+
+    try:
+        logger.info(f"🎬 Burning subtitles: {subtitle_path} -> {video_path}")
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-vf", f"subtitles={subtitle_path}:force_style='FontSize=18,PrimaryColour=&HFFFFFF&'",
+            "-c:a", "copy",
+            output_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=280)
+
+        if result.returncode == 0 and os.path.exists(output_path):
+            logger.info("✅ Subtitles burned successfully")
+            try:
+                os.remove(video_path)
+                os.remove(subtitle_path)
+            except Exception:
+                pass
+            return output_path
+        else:
+            logger.error(f"❌ ffmpeg failed: {result.stderr[-500:]}")
+            return video_path
+    except Exception as e:
+        logger.error(f"❌ Subtitle burn error: {e}")
+        return video_path
+
+
+def try_download_with_proxies(url, format_id, output, audio_only=False, use_subtitles=False, filename_id=None):
     last_error = None
 
     for i, proxy in enumerate(PROXY_LIST):
         try:
             logger.info(f"🔄 Trying proxy {i+1}/{len(PROXY_LIST)}...")
-            
-            opts = get_ydl_opts_with_proxy(format_id, output, audio_only, proxy)
-            
+            opts = get_ydl_opts_with_proxy(format_id, output, audio_only, proxy, use_subtitles)
+
             with yt_dlp.YoutubeDL(opts) as ydl:
                 if audio_only:
                     ydl.download([url])
@@ -130,20 +166,23 @@ def try_download_with_proxies(url, format_id, output, audio_only=False):
                 else:
                     info = ydl.extract_info(url, download=True)
                     filename = ydl.prepare_filename(info)
-                
+
                 if os.path.exists(filename):
                     logger.info(f"✅ Success with proxy {i+1}")
+
+                    if use_subtitles and not audio_only and filename_id:
+                        filename = burn_subtitles(filename, filename_id)
+
                     return filename
                 else:
                     raise Exception("File not created")
-                    
+
         except Exception as e:
             error_msg = str(e)
             logger.warning(f"❌ Proxy {i+1} failed: {error_msg[:100]}")
             last_error = e
             continue
 
-    # اگه هیچ پروکسی‌ای جواب نداد
     raise Exception(f"All proxies failed. Last error: {last_error}")
 
 
@@ -175,6 +214,7 @@ def home():
         "endpoints": {
             "/formats": "POST - Get all available formats",
             "/download": "POST - Download with specific format",
+            "/download_direct": "GET - Direct download link (for share/play/DownloadManager)",
             "/download_audio": "POST - Download as MP3",
             "/download_best": "POST - Download best quality"
         }
@@ -194,15 +234,15 @@ def get_formats():
 
         logger.info(f"🔍 Getting formats for: {url}")
 
-        # برای گرفتن فرمت‌ها هم پروکسی رو امتحان می‌کنیم
         last_error = None
+        info = None
         for i, proxy in enumerate(PROXY_LIST):
             try:
                 logger.info(f"🔄 Trying proxy {i+1} for formats...")
                 opts = get_ydl_opts_with_proxy(proxy=proxy)
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = ydl.extract_info(url, download=False)
-                    break  # اگه موفق شد، از حلقه خارج شو
+                    break
             except Exception as e:
                 logger.warning(f"❌ Proxy {i+1} failed for formats: {str(e)[:100]}")
                 last_error = e
@@ -214,11 +254,8 @@ def get_formats():
             return jsonify({"error": "YouTube اطلاعات ویدیو را برنگرداند."}), 500
 
         all_formats = info.get("formats", [])
-
         if not all_formats:
             return jsonify({"error": "هیچ فرمتی برای این ویدیو پیدا نشد"}), 404
-
-        logger.info(f"✅ Found {len(all_formats)} total formats")
 
         formats_list = []
         for f in all_formats:
@@ -257,30 +294,20 @@ def download_video():
             return jsonify({"error": "JSON دریافت نشد"}), 400
 
         url = data.get("url")
-        format_id = data.get("format_id")
+        format_id = data.get("format_id") or "best"
+        use_subtitles = bool(data.get("use_subtitles", False))
 
         if not url:
             return jsonify({"error": "لینک ارسال نشده"}), 400
 
-        if not format_id:
-            format_id = "best"
-            logger.info(f"ℹ️ No format_id provided, using 'best'")
-
-        logger.info(f"⬇️ Downloading: {url} with format: {format_id}")
+        logger.info(f"⬇️ Downloading: {url} format={format_id} subtitles={use_subtitles}")
 
         filename_id = str(uuid.uuid4())
         output = os.path.join(DOWNLOAD_FOLDER, f"{filename_id}.%(ext)s")
 
-        # امتحان کردن همه‌ی پروکسی‌ها
-        filename = try_download_with_proxies(url, format_id, output, audio_only=False)
+        filename = try_download_with_proxies(url, format_id, output, audio_only=False, use_subtitles=use_subtitles, filename_id=filename_id)
 
-        logger.info(f"✅ Download complete: {os.path.basename(filename)} (size: {os.path.getsize(filename)} bytes)")
-
-        response = send_file(
-            filename,
-            as_attachment=True,
-            download_name=os.path.basename(filename)
-        )
+        response = send_file(filename, as_attachment=True, download_name=os.path.basename(filename))
 
         @response.call_on_close
         def cleanup():
@@ -288,7 +315,6 @@ def download_video():
             try:
                 if os.path.exists(filename):
                     os.remove(filename)
-                    logger.info(f"🗑️ Cleaned up: {os.path.basename(filename)}")
             except Exception as e:
                 logger.warning(f"⚠️ Cleanup failed: {e}")
 
@@ -296,6 +322,43 @@ def download_video():
 
     except Exception as e:
         logger.error(f"❌ Error in /download: {str(e)}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/download_direct", methods=["GET"])
+def download_direct():
+    """مسیر GET برای DownloadManager اندروید، Share، و پخش مستقیم"""
+    try:
+        url = request.args.get("url")
+        format_id = request.args.get("format_id") or "best"
+        use_subtitles = request.args.get("use_subtitles", "false").lower() == "true"
+
+        if not url:
+            return jsonify({"error": "لینک ارسال نشده"}), 400
+
+        logger.info(f"⬇️ [GET] Downloading: {url} format={format_id} subtitles={use_subtitles}")
+
+        filename_id = str(uuid.uuid4())
+        output = os.path.join(DOWNLOAD_FOLDER, f"{filename_id}.%(ext)s")
+
+        filename = try_download_with_proxies(url, format_id, output, audio_only=False, use_subtitles=use_subtitles, filename_id=filename_id)
+
+        response = send_file(filename, as_attachment=True, download_name=os.path.basename(filename))
+
+        @response.call_on_close
+        def cleanup():
+            time.sleep(5)
+            try:
+                if os.path.exists(filename):
+                    os.remove(filename)
+            except Exception as e:
+                logger.warning(f"⚠️ Cleanup failed: {e}")
+
+        return response
+
+    except Exception as e:
+        logger.error(f"❌ Error in /download_direct: {str(e)}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -311,8 +374,6 @@ def download_audio():
         if not url:
             return jsonify({"error": "لینک ارسال نشده"}), 400
 
-        logger.info(f"🎵 Downloading audio from: {url}")
-
         filename_id = str(uuid.uuid4())
         output = os.path.join(DOWNLOAD_FOLDER, f"{filename_id}.%(ext)s")
 
@@ -321,13 +382,7 @@ def download_audio():
         if not os.path.exists(filename):
             raise FileNotFoundError(f"MP3 not found: {filename}")
 
-        logger.info(f"✅ Audio download complete: {os.path.basename(filename)}")
-
-        response = send_file(
-            filename,
-            as_attachment=True,
-            download_name=os.path.basename(filename)
-        )
+        response = send_file(filename, as_attachment=True, download_name=os.path.basename(filename))
 
         @response.call_on_close
         def cleanup():
@@ -335,7 +390,6 @@ def download_audio():
             try:
                 if os.path.exists(filename):
                     os.remove(filename)
-                    logger.info(f"🗑️ Cleaned up: {os.path.basename(filename)}")
             except Exception as e:
                 logger.warning(f"⚠️ Cleanup failed: {e}")
 
@@ -358,20 +412,12 @@ def download_best():
         if not url:
             return jsonify({"error": "لینک ارسال نشده"}), 400
 
-        logger.info(f"🌟 Downloading best quality from: {url}")
-
         filename_id = str(uuid.uuid4())
         output = os.path.join(DOWNLOAD_FOLDER, f"{filename_id}.%(ext)s")
 
         filename = try_download_with_proxies(url, "bestvideo+bestaudio/best", output, audio_only=False)
 
-        logger.info(f"✅ Best quality download complete: {os.path.basename(filename)}")
-
-        response = send_file(
-            filename,
-            as_attachment=True,
-            download_name=os.path.basename(filename)
-        )
+        response = send_file(filename, as_attachment=True, download_name=os.path.basename(filename))
 
         @response.call_on_close
         def cleanup():
@@ -379,7 +425,6 @@ def download_best():
             try:
                 if os.path.exists(filename):
                     os.remove(filename)
-                    logger.info(f"🗑️ Cleaned up: {os.path.basename(filename)}")
             except Exception as e:
                 logger.warning(f"⚠️ Cleanup failed: {e}")
 
