@@ -115,7 +115,6 @@ def get_ydl_opts_with_proxy(format_id=None, output=None, audio_only=False, proxy
 
 
 def burn_subtitles(video_path, filename_id):
-    """اگه فایل زیرنویس فارسی پیدا شد، با ffmpeg بچسبونش به ویدیو"""
     subtitle_matches = glob.glob(os.path.join(DOWNLOAD_FOLDER, f"{filename_id}*.fa.vtt"))
     if not subtitle_matches:
         logger.warning("⚠️ No Persian subtitle file found, skipping burn-in")
@@ -212,9 +211,9 @@ def home():
         "message": "VaziriDownloader Server is running",
         "proxies_count": len(PROXY_LIST),
         "endpoints": {
-            "/formats": "POST - Get all available formats",
+            "/formats": "POST - Get all available formats (includes stream_url for instant playback)",
             "/download": "POST - Download with specific format",
-            "/download_direct": "GET - Direct download link (for share/play/DownloadManager)",
+            "/download_direct": "GET - Direct download link (for share/DownloadManager)",
             "/download_audio": "POST - Download as MP3",
             "/download_best": "POST - Download best quality"
         }
@@ -268,6 +267,7 @@ def get_formats():
                     "vcodec": f.get("vcodec", "none"),
                     "acodec": f.get("acodec", "none"),
                     "format_note": f.get("format_note", ""),
+                    "stream_url": f.get("url"),
                 })
 
         if not formats_list:
@@ -328,7 +328,6 @@ def download_video():
 
 @app.route("/download_direct", methods=["GET"])
 def download_direct():
-    """مسیر GET برای DownloadManager اندروید، Share، و پخش مستقیم"""
     try:
         url = request.args.get("url")
         format_id = request.args.get("format_id") or "best"
